@@ -6,10 +6,16 @@ from pydantic import BaseModel, Field, EmailStr
 from bson import ObjectId
 from typing import Optional, List
 import motor.motor_asyncio
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
-client = motor.motor_asyncio.AsyncIOMotorClient(os.environ["MONGODB_URL"])
-db = client.college
+# app.mount("/chat", StaticFiles(directory="./templates/", html=True), name="html")
+
+MONGODB_URL="mongodb://127.0.0.1/?retryWrites=true&w=majority"
+client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URL)
+# client = motor.motor_asyncio.AsyncIOMotorClient(os.environ["MONGODB_URL"])
+db = client.honya
 
 
 class PyObjectId(ObjectId):
@@ -26,14 +32,12 @@ class PyObjectId(ObjectId):
     @classmethod
     def __modify_schema__(cls, field_schema):
         field_schema.update(type="string")
-
-
-class StudentModel(BaseModel):
+# 第一引数はデフォルト値, 省略（...）時は必須になる
+class FileRecordModel(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    name: str = Field(...)
-    email: EmailStr = Field(...)
-    course: str = Field(...)
-    gpa: float = Field(..., le=4.0)
+    title: str = Field(...)
+    text: str = Field(...)
+    file_format: str = Field(...)
 
     class Config:
         allow_population_by_field_name = True
@@ -41,83 +45,81 @@ class StudentModel(BaseModel):
         json_encoders = {ObjectId: str}
         schema_extra = {
             "example": {
-                "name": "Jane Doe",
-                "email": "jdoe@example.com",
-                "course": "Experiments, Science, and Fashion in Nanophotonics",
-                "gpa": "3.0",
+                "title": "hoge_file",
+                "text": "これはファイル本文です",
+                "file_format": "pdf",
             }
         }
 
 
-class UpdateStudentModel(BaseModel):
-    name: Optional[str]
-    email: Optional[EmailStr]
-    course: Optional[str]
-    gpa: Optional[float]
+class UpdateFileRecordModel(BaseModel):
+    title: Optional[str]
+    text: Optional[str]
+    file_foramt: Optional[str]
 
     class Config:
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
         schema_extra = {
             "example": {
-                "name": "Jane Doe",
-                "email": "jdoe@example.com",
-                "course": "Experiments, Science, and Fashion in Nanophotonics",
-                "gpa": "3.0",
+                "title": "update_hoge_file",
+                "text": "これは更新用ファイル本文です",
+                "file_format": "pdf",
             }
         }
 
 
-@app.post("/", response_description="Add new student", response_model=StudentModel)
-async def create_student(student: StudentModel = Body(...)):
-    student = jsonable_encoder(student)
-    new_student = await db["students"].insert_one(student)
-    created_student = await db["students"].find_one({"_id": new_student.inserted_id})
+@app.post("/", response_description="Add new FileRecord", response_model=FileRecordModel)
+async def create_student(filerecord : FileRecordModel = Body(...)):
+    filerecord = jsonable_encoder(filerecord )
+    new_filerecord  = await db["FileRecord"].insert_one(filerecord )
+    created_student = await db["FileRecord"].find_one({"_id": new_filerecord .inserted_id})
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=created_student)
 
-
 @app.get(
-    "/", response_description="List all students", response_model=List[StudentModel]
+    "/", response_description="List all file", response_model=List[FileRecordModel]
 )
 async def list_students():
-    students = await db["students"].find().to_list(1000)
+    students = await db["FileRecord"].find().to_list(1000)
     return students
 
 
 @app.get(
-    "/{id}", response_description="Get a single student", response_model=StudentModel
+    "/{id}", response_description="Get a single file", response_model=FileRecordModel
 )
 async def show_student(id: str):
-    if (student := await db["students"].find_one({"_id": id})) is not None:
-        return student
+    if (file := await db["FileRecord"].find_one({"_id": id})) is not None:
+        return file
 
-    raise HTTPException(status_code=404, detail=f"Student {id} not found")
+    raise HTTPException(status_code=404, detail=f"File {id} not found")
 
 
-@app.put("/{id}", response_description="Update a student", response_model=StudentModel)
-async def update_student(id: str, student: UpdateStudentModel = Body(...)):
-    student = {k: v for k, v in student.dict().items() if v is not None}
+@app.put("/{id}", response_description="Update a FileRecord", response_model=FileRecordModel)
+async def update_student(id: str, student: UpdateFileRecordModel = Body(...)):
+    files = {k: v for k, v in student.dict().items() if v is not None}
+    print(files)
 
-    if len(student) >= 1:
-        update_result = await db["students"].update_one({"_id": id}, {"$set": student})
+    if len(files) >= 1:
+        update_result = await db["FileRecord"].update_one({"_id": id}, {"$set": files})
 
         if update_result.modified_count == 1:
             if (
-                updated_student := await db["students"].find_one({"_id": id})
+                updated_file := await db["FileRecord"].find_one({"_id": id})
             ) is not None:
-                return updated_student
+                return updated_file
 
-    if (existing_student := await db["students"].find_one({"_id": id})) is not None:
-        return existing_student
+    if (existing_file := await db["FileRecord"].find_one({"_id": id})) is not None:
+        return existing_file
 
-    raise HTTPException(status_code=404, detail=f"Student {id} not found")
+    raise HTTPException(status_code=404, detail=f"FileRecord {id} not found")
 
 
-@app.delete("/{id}", response_description="Delete a student")
+@app.delete("/{id}", response_description="Delete a file")
 async def delete_student(id: str):
-    delete_result = await db["students"].delete_one({"_id": id})
+    delete_result = await db["FileRecord"].delete_one({"_id": id})
 
     if delete_result.deleted_count == 1:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        # return Response(status_code=status.HTTP_204_NO_CONTENT)
+        return {"answer":"ここか","respon":Response(status_code=status.HTTP_204_NO_CONTENT)}
 
     raise HTTPException(status_code=404, detail=f"Student {id} not found")
